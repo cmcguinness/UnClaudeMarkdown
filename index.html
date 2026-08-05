@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Un-Claude Markdown</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --pane: #ffffff;
+    --border: #e3e3dd;
+    --text: #1f1f1d;
+    --muted: #6b6b64;
+    --accent: #2b6cb0;
+    --accent-hover: #245a94;
+    --radius: 10px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2rem 1.5rem 3rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  header {
+    max-width: 1400px;
+    margin: 0 auto 1.5rem;
+  }
+
+  h1 {
+    margin: 0 0 .25rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+
+  .tagline {
+    margin: 0;
+    color: var(--muted);
+    font-size: .9rem;
+  }
+
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1rem;
+    align-items: stretch;
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .pane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    min-height: 2rem;
+    margin-bottom: .5rem;
+  }
+
+  .pane-title {
+    font-size: .8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+
+  textarea {
+    flex: 1;
+    width: 100%;
+    min-height: 60vh;
+    padding: .9rem 1rem;
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: none;
+    tab-size: 4;
+  }
+
+  textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  textarea[readonly] {
+    background: #fbfbfa;
+    color: #2f2f2c;
+  }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .6rem;
+    padding-top: 2.5rem;
+  }
+
+  button {
+    padding: .5rem .95rem;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: .875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    white-space: nowrap;
+  }
+
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+  .btn-secondary {
+    background: var(--pane);
+    border-color: var(--border);
+    color: var(--muted);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    border-color: #cfcfc7;
+    color: var(--text);
+  }
+
+  #toast {
+    position: fixed;
+    bottom: 1.75rem;
+    left: 50%;
+    transform: translate(-50%, .5rem);
+    padding: .55rem 1.1rem;
+    background: #2c2c28;
+    color: #fff;
+    border-radius: 999px;
+    font-size: .85rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  #toast.error { background: #9b2c2c; }
+
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+    .controls { flex-direction: row; justify-content: flex-start; padding-top: 0; }
+    textarea { min-height: 40vh; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Un-Claude Markdown</h1>
+  <p class="tagline">Paste text copied out of the Claude&nbsp;Code terminal. Get markdown that renders the way it was meant to.</p>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="pane-head"><span class="pane-title">Paste here</span></div>
+    <textarea id="input" placeholder="Paste your copied text&hellip;" spellcheck="false" autofocus></textarea>
+  </section>
+
+  <div class="controls">
+    <button id="clean" class="btn-primary" disabled>Clean &rarr;</button>
+    <button id="clear" class="btn-secondary">Clear</button>
+  </div>
+
+  <section class="pane">
+    <div class="pane-head">
+      <span class="pane-title">Cleaned</span>
+      <button id="copy" class="btn-secondary" disabled>Copy to clipboard</button>
+    </div>
+    <textarea id="output" readonly spellcheck="false" placeholder="Cleaned markdown appears here&hellip;"></textarea>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ *
+   * Cleanup pipeline. See specification.md for the rules these implement.
+   * ------------------------------------------------------------------ */
+
+  var TAB_STOP = 4;
+
+  // Claude Code UI chrome that can ride along with a terminal copy.
+  var GLYPH_LINE = /^([ \t]*)([⏺●⎿│├└─→•‣◦▪])[ \t]*([\s\S]*)$/;
+
+  // Lines that start a new markdown block and so must not be joined onto the
+  // line above: list markers, headings, blockquotes, table rows, thematic breaks.
+  var BLOCK_START = /^ *(?:[-*+][ \t]|\d+[.)][ \t]|#{1,6}[ \t]|>|\||(?:-{3,}|\*{3,}|_{3,}) *$)/;
+
+  var FENCE = /^ *(?:```|~~~)/;
+
+  // A single shared fence scan, reused by every step that needs to know which
+  // lines sit inside a code block. An unclosed fence stays open through the end
+  // of the text, so a paste that starts or ends mid-code-block is left alone.
+  function computeFences(lines) {
+    var inFence = new Array(lines.length);
+    var open = false;
+    for (var i = 0; i < lines.length; i++) {
+      if (FENCE.test(lines[i])) {
+        inFence[i] = true;      // the fence marker itself passes through untouched
+        open = !open;
+      } else {
+        inFence[i] = open;
+      }
+    }
+    return inFence;
+  }
+
+  function indentOf(line) {
+    return line.match(/^ */)[0].length;
+  }
+
+  function isBlank(line) {
+    return line.trim() === '';
+  }
+
+  function text(item) {
+    return item.text;
+  }
+
+  /* Step 0 — normalize characters. */
+
+  function expandLeadingTabs(line) {
+    var out = '', col = 0, i = 0;
+    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) {
+      if (line[i] === '\t') {
+        var advance = TAB_STOP - (col % TAB_STOP);
+        out += new Array(advance + 1).join(' ');
+        col += advance;
+      } else {
+        out += ' ';
+        col += 1;
+      }
+      i++;
+    }
+    return out + line.slice(i);
+  }
+
+  function normalize(text) {
+    return text
+      .replace(/\r\n?/g, '\n')                  // CRLF -> LF
+      .replace(/\u00a0/g, ' ')                  // non-breaking space -> space
+      .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')    // zero-width invisibles
+      .split('\n')
+      .map(expandLeadingTabs);
+  }
+
+  /* Step 1 — remove the common leading indent, preserving relative nesting.
+   *
+   * "Common" means the *most frequent* indent, not the smallest. A single
+   * outlier line indented less than its neighbours is normal in a terminal copy,
+   * and using the minimum would leave a stray space on every other line. Lines
+   * shallower than the modal indent are simply flushed left. Code-block interiors
+   * are excluded from the vote so a long indented listing can't outvote the prose,
+   * but they are still dedented by the winning amount, so nesting survives.
+   */
+
+  function dedent(lines) {
+    var inFence = computeFences(lines);
+
+    function tally(skipFences) {
+      var counts = {}, any = false;
+      for (var i = 0; i < lines.length; i++) {
+        if (isBlank(lines[i]) || (skipFences && inFence[i])) continue;
+        var n = indentOf(lines[i]);
+        counts[n] = (counts[n] || 0) + 1;
+        any = true;
+      }
+      return any ? counts : null;
+    }
+
+    var counts = tally(true) || tally(false);
+    if (!counts) return lines;
+
+    // Object keys for integer-like properties iterate in ascending numeric
+    // order, and the comparison is strict, so ties go to the smaller indent.
+    var best = 0, bestCount = 0;
+    Object.keys(counts).forEach(function (key) {
+      if (counts[key] > bestCount) { bestCount = counts[key]; best = Number(key); }
+    });
+
+    if (best === 0) return lines;
+    return lines.map(function (line) {
+      return isBlank(line) ? line : line.slice(Math.min(best, indentOf(line)));
+    });
+  }
+
+  /* Step 2 — strip trailing whitespace. */
+
+  function stripTrailing(lines) {
+    return lines.map(function (line) { return line.replace(/[ \t]+$/, ''); });
+  }
+
+  /* Step 3 — Claude Code UI glyphs.
+   *
+   * Structural test, not glyph-specific: two or more lines at the same indent
+   * starting with the same glyph are a bullet list and become "- ". Anything
+   * else is chrome and gets stripped. A blank line or a shallower-indented line
+   * breaks a run; unglyphed lines at the same-or-deeper indent are wrapped
+   * continuations and do not.
+   */
+
+  function handleGlyphs(items) {
+    var lines = items.map(text);
+    var inFence = computeFences(lines);
+    var match = lines.map(function (line, i) {
+      return inFence[i] ? null : GLYPH_LINE.exec(line);
+    });
+
+    var action = new Array(lines.length);
+    var run = [], runIndent = -1, runGlyph = null;
+
+    function flush() {
+      if (run.length) {
+        var kind = run.length >= 2 ? 'bullet' : 'strip';
+        run.forEach(function (i) { action[i] = kind; });
+      }
+      run = []; runIndent = -1; runGlyph = null;
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      if (inFence[i] || isBlank(lines[i])) { flush(); continue; }
+
+      var m = match[i];
+      if (m) {
+        var gIndent = m[1].length;
+        if (run.length && gIndent === runIndent && m[2] === runGlyph) {
+          run.push(i);
+        } else {
+          flush();
+          run = [i]; runIndent = gIndent; runGlyph = m[2];
+        }
+      } else if (!(run.length && indentOf(lines[i]) >= runIndent)) {
+        flush();   // not a continuation — the run ends here
+      }
+    }
+    flush();
+
+    return items.map(function (item, i) {
+      if (!action[i]) return item;
+      var m = match[i];
+      if (action[i] === 'bullet') {
+        return { text: new Array(m[1].length + 1).join(' ') + '- ' + m[3], noJoin: false };
+      }
+      // Chrome: the glyph and the indent that positioned it both go. The line is
+      // flagged noJoin so it stays a line of its own — a stripped transcript
+      // marker shouldn't get glued onto the text around it.
+      return { text: m[3], noJoin: true };
+    });
+  }
+
+  /* Step 4 — collapse blank lines (runs to one; none at the very start or end). */
+
+  function collapseBlanks(items) {
+    var inFence = computeFences(items.map(text));
+    var out = [];
+    var lastBlank = false;
+
+    for (var i = 0; i < items.length; i++) {
+      if (inFence[i]) {
+        out.push(items[i]);
+        lastBlank = false;
+      } else if (isBlank(items[i].text)) {
+        if (!lastBlank && out.length) out.push({ text: '', noJoin: false });
+        lastBlank = true;
+      } else {
+        out.push(items[i]);
+        lastBlank = false;
+      }
+    }
+
+    while (out.length && isBlank(out[0].text)) out.shift();
+    while (out.length && isBlank(out[out.length - 1].text)) out.pop();
+    return out;
+  }
+
+  /* Step 5 — join hard-wrapped lines within paragraphs. */
+
+  function joinWraps(items) {
+    var inFence = computeFences(items.map(text));
+    var out = [];
+    var buffer = null;
+    var inIndentedCode = false;
+    var afterBlank = true;   // start of text behaves like it follows a blank line
+
+    function flush() {
+      if (buffer !== null) { out.push(buffer); buffer = null; }
+    }
+
+    for (var i = 0; i < items.length; i++) {
+      var line = items[i].text;
+
+      if (items[i].noJoin) {
+        flush();
+        out.push(line);
+        inIndentedCode = false;
+        afterBlank = false;
+        continue;
+      }
+
+      if (inFence[i]) {
+        flush();
+        out.push(line);
+        inIndentedCode = false;
+        afterBlank = false;
+        continue;
+      }
+
+      if (isBlank(line)) {
+        flush();
+        out.push('');
+        inIndentedCode = false;
+        afterBlank = true;
+        continue;
+      }
+
+      var indent = indentOf(line);
+
+      if (inIndentedCode) {
+        if (indent >= 4) { out.push(line); afterBlank = false; continue; }
+        inIndentedCode = false;
+      }
+
+      // An indented (unfenced) code block: 4+ spaces following a blank line.
+      if (afterBlank && indent >= 4) {
+        flush();
+        out.push(line);
+        inIndentedCode = true;
+        afterBlank = false;
+        continue;
+      }
+
+      if (BLOCK_START.test(line)) {
+        flush();
+        buffer = line;
+      } else if (buffer === null) {
+        buffer = line;
+      } else {
+        buffer += ' ' + line.trim();
+      }
+      afterBlank = false;
+    }
+
+    flush();
+    return out;
+  }
+
+  function clean(source) {
+    var lines = normalize(source);
+    lines = dedent(lines);
+    lines = stripTrailing(lines);
+
+    // From here the steps carry a per-line noJoin flag alongside the text.
+    var items = lines.map(function (line) {
+      return { text: line, noJoin: false };
+    });
+    items = handleGlyphs(items);
+    items = collapseBlanks(items);
+
+    return joinWraps(items).join('\n');
+  }
+
+  /* ------------------------------------------------------------------ *
+   * UI wiring
+   * ------------------------------------------------------------------ */
+
+  var input = document.getElementById('input');
+  var output = document.getElementById('output');
+  var cleanBtn = document.getElementById('clean');
+  var copyBtn = document.getElementById('copy');
+  var clearBtn = document.getElementById('clear');
+  var toast = document.getElementById('toast');
+  var toastTimer = null;
+
+  function showToast(message, isError) {
+    toast.textContent = message;
+    toast.className = isError ? 'show error' : 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.className = ''; }, 1800);
+  }
+
+  function syncButtons() {
+    cleanBtn.disabled = input.value.trim() === '';
+    copyBtn.disabled = output.value === '';
+  }
+
+  input.addEventListener('input', syncButtons);
+
+  cleanBtn.addEventListener('click', function () {
+    output.value = clean(input.value);
+    output.scrollTop = 0;
+    syncButtons();
+  });
+
+  clearBtn.addEventListener('click', function () {
+    input.value = '';
+    output.value = '';
+    syncButtons();
+    input.focus();
+  });
+
+  copyBtn.addEventListener('click', function () {
+    var text = output.value;
+
+    function fallback() {
+      // navigator.clipboard is unavailable on file:// in some browsers.
+      output.focus();
+      output.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      output.setSelectionRange(0, 0);
+      output.blur();
+      showToast(ok ? 'Copied to clipboard' : 'Copy failed', !ok);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        showToast('Copied to clipboard', false);
+      }, fallback);
+    } else {
+      fallback();
+    }
+  });
+
+  syncButtons();
+})();
+</script>
+
+</body>
+</html>
