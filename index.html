@@ -216,13 +216,34 @@
   var TAB_STOP = 4;
 
   // Claude Code UI chrome that can ride along with a terminal copy.
-  var GLYPH_LINE = /^([ \t]*)([⏺●⎿│├└─→•‣◦▪])[ \t]*([\s\S]*)$/;
+  //
+  // Tree branches (├ └ ─) are deliberately absent: they are structure, not
+  // chrome, and the block reconstruction below rebuilds the ones it is confident
+  // about. Stripping the leftovers turned "├── src/" into "── src/", which is
+  // worse than leaving it alone.
+  var GLYPH_LINE = /^([ \t]*)([⏺●⎿│→•‣◦▪])[ \t]*([\s\S]*)$/;
 
   // Lines that start a new markdown block and so must not be joined onto the
   // line above: list markers, headings, blockquotes, table rows, thematic breaks.
   var BLOCK_START = /^ *(?:[-*+][ \t]|\d+[.)][ \t]|#{1,6}[ \t]|>|\||(?:-{3,}|\*{3,}|_{3,}) *$)/;
 
   var FENCE = /^ *(?:```|~~~)/;
+
+  // Box-drawing table parts. A table is recognised only from a complete top
+  // border, which is the high-confidence signal — a paste that starts mid-table
+  // is left alone rather than guessed at.
+  var BOX_TOP    = /^ *┌[─┬]*┐ *$/;
+  var BOX_SEP    = /^ *├[─┼]*┤ *$/;
+  var BOX_BOTTOM = /^ *└[─┴]*┘ *$/;
+  var BOX_ROW    = /^ *│.*│ *$/;
+
+  // Directory trees. The branch marker is distinctive enough to be safe; both
+  // the unicode form Claude Code emits and `tree`'s ASCII fallback are matched.
+  var TREE_BRANCH = /^[│|`\s]*(?:├──|└──|\|--|`--)\s*\S/;
+  var TREE_SPACER = /^[│| \t]+$/;
+  // A tree's root line: a bare path or filename, no spaces and no punctuation
+  // that would suggest prose. "myproject/" qualifies; "Here's the layout:" does not.
+  var TREE_ROOT   = /^[\w.@][\w.@+\-\/]*$/;
 
   // A single shared fence scan, reused by every step that needs to know which
   // lines sit inside a code block. An unclosed fence stays open through the end
@@ -326,6 +347,175 @@
     return lines.map(function (line) { return line.replace(/[ \t]+$/, ''); });
   }
 
+  /* Step 2.5 — reconstruct box-drawing blocks.
+   *
+   * Terminal rendering turns a markdown table into a box-drawn one and a file
+   * listing into a tree. Both are structure the author meant to convey, and both
+   * are destroyed by the glyph step below if left to it, so they are recognised
+   * and rebuilt first. Recognition is deliberately strict: a table needs a
+   * complete top border, a tree needs two or more branch lines. Anything less
+   * confident is left for the ordinary rules.
+   *
+   * Reconstructed blocks are flagged `raw` and every later step passes them
+   * through untouched.
+   */
+
+  function splitCells(line) {
+    var t = line.trim();
+    return t.slice(1, -1).split('│').map(function (cell) { return cell.trim(); });
+  }
+
+  // One logical row may span several physical lines, because the terminal wrapped
+  // a long cell. Fragments of the same column rejoin with a single space; the
+  // blank fragments that pad the short columns of a tall row are dropped.
+  function mergeRow(physical) {
+    var cols = physical.reduce(function (n, cells) { return Math.max(n, cells.length); }, 0);
+    var out = [];
+    for (var c = 0; c < cols; c++) {
+      var parts = [];
+      physical.forEach(function (cells) {
+        if (cells[c]) parts.push(cells[c]);
+      });
+      out.push(parts.join(' '));
+    }
+    return out;
+  }
+
+  function parseBoxTable(lines, start) {
+    var groups = [], current = [], end = -1, i;
+
+    for (i = start + 1; i < lines.length; i++) {
+      if (BOX_BOTTOM.test(lines[i])) { end = i; break; }
+      if (BOX_SEP.test(lines[i])) {
+        if (current.length) groups.push(current);
+        current = [];
+      } else if (BOX_ROW.test(lines[i])) {
+        current.push(splitCells(lines[i]));
+      } else {
+        break;   // truncated paste — the table ends at the previous line
+      }
+    }
+    if (current.length) groups.push(current);
+    if (!groups.length) return null;
+
+    return { groups: groups, end: end === -1 ? i - 1 : end };
+  }
+
+  function boxTableToMarkdown(groups) {
+    var rows = groups.map(mergeRow);
+    var cols = rows.reduce(function (n, row) { return Math.max(n, row.length); }, 0);
+
+    // A single-column box is a boxed note or ASCII art, not a table.
+    if (cols < 2) return null;
+
+    rows = rows.map(function (row) {
+      var cells = row.slice();
+      while (cells.length < cols) cells.push('');
+      return cells.map(function (cell) { return cell.replace(/\|/g, '\\|'); });
+    });
+
+    // Pad columns so the emitted source lines up, the way a human would write it.
+    // The box drawing carries no alignment information, so every column is left.
+    var widths = [];
+    for (var c = 0; c < cols; c++) {
+      var w = 3;
+      rows.forEach(function (row) { w = Math.max(w, row[c].length); });
+      widths.push(w);
+    }
+
+    function fill(ch, n) { return new Array(n + 1).join(ch); }
+    function render(cells) {
+      return '| ' + cells.map(function (cell, c) {
+        return cell + fill(' ', widths[c] - cell.length);
+      }).join(' | ') + ' |';
+    }
+
+    var out = [render(rows[0])];
+    out.push('| ' + widths.map(function (w) { return fill('-', w); }).join(' | ') + ' |');
+    for (var i = 1; i < rows.length; i++) out.push(render(rows[i]));
+    return out;
+  }
+
+  function treeRun(lines, start, inFence) {
+    if (!TREE_BRANCH.test(lines[start])) return null;
+
+    var branches = 0, last = start;
+    for (var i = start; i < lines.length && !inFence[i]; i++) {
+      if (TREE_BRANCH.test(lines[i])) { branches++; last = i; }
+      else if (!TREE_SPACER.test(lines[i])) break;   // blank or prose ends the run
+    }
+    // A lone branch line is more likely stray chrome than a tree.
+    return branches >= 2 ? { start: start, end: last } : null;
+  }
+
+  function findBlocks(lines) {
+    var inFence = computeFences(lines);
+    var blocks = [];
+    var i = 0;
+
+    while (i < lines.length) {
+      if (inFence[i]) { i++; continue; }
+
+      if (BOX_TOP.test(lines[i])) {
+        var table = parseBoxTable(lines, i);
+        if (table) {
+          // A complete box that isn't a table — a boxed note, ASCII art — is
+          // still deliberate structure. Fence it rather than convert or strip it.
+          var md = boxTableToMarkdown(table.groups) ||
+                   ['```'].concat(lines.slice(i, table.end + 1), ['```']);
+          blocks.push({ start: i, end: table.end, out: md });
+          i = table.end + 1;
+          continue;
+        }
+      }
+
+      var run = treeRun(lines, i, inFence);
+      if (run) {
+        var from = run.start;
+        // A tree's root sits immediately above it with no blank line between.
+        var prev = from - 1;
+        var free = !blocks.length || blocks[blocks.length - 1].end < prev;
+        if (prev >= 0 && free && !inFence[prev] && TREE_ROOT.test(lines[prev])) from = prev;
+
+        // Markdown collapses the tree's line breaks unless it is fenced.
+        blocks.push({
+          start: from,
+          end: run.end,
+          out: ['```'].concat(lines.slice(from, run.end + 1), ['```'])
+        });
+        i = run.end + 1;
+        continue;
+      }
+
+      i++;
+    }
+    return blocks;
+  }
+
+  function reconstructBlocks(lines) {
+    var byStart = {};
+    findBlocks(lines).forEach(function (b) { byStart[b.start] = b; });
+
+    var items = [];
+    var i = 0;
+    while (i < lines.length) {
+      var block = byStart[i];
+      if (block) {
+        block.out.forEach(function (line) {
+          items.push({ text: line, noJoin: false, raw: true });
+        });
+        i = block.end + 1;
+      } else {
+        // A branch line too isolated to be a confident tree is left as it is —
+        // but never joined onto its neighbours, which would glue it into a
+        // paragraph and lose the line break it clearly wanted.
+        items.push({ text: lines[i], noJoin: TREE_BRANCH.test(lines[i]), raw: false });
+        i++;
+      }
+    }
+    return items;
+  }
+
   /* Step 3 — Claude Code UI glyphs.
    *
    * Structural test, not glyph-specific: two or more lines at the same indent
@@ -339,7 +529,7 @@
     var lines = items.map(text);
     var inFence = computeFences(lines);
     var match = lines.map(function (line, i) {
-      return inFence[i] ? null : GLYPH_LINE.exec(line);
+      return (inFence[i] || items[i].raw) ? null : GLYPH_LINE.exec(line);
     });
 
     var action = new Array(lines.length);
@@ -354,7 +544,7 @@
     }
 
     for (var i = 0; i < lines.length; i++) {
-      if (inFence[i] || isBlank(lines[i])) { flush(); continue; }
+      if (inFence[i] || items[i].raw || isBlank(lines[i])) { flush(); continue; }
 
       var m = match[i];
       if (m) {
@@ -375,12 +565,12 @@
       if (!action[i]) return item;
       var m = match[i];
       if (action[i] === 'bullet') {
-        return { text: new Array(m[1].length + 1).join(' ') + '- ' + m[3], noJoin: false };
+        return { text: new Array(m[1].length + 1).join(' ') + '- ' + m[3], noJoin: false, raw: false };
       }
       // Chrome: the glyph and the indent that positioned it both go. The line is
       // flagged noJoin so it stays a line of its own — a stripped transcript
       // marker shouldn't get glued onto the text around it.
-      return { text: m[3], noJoin: true };
+      return { text: m[3], noJoin: true, raw: false };
     });
   }
 
@@ -392,11 +582,11 @@
     var lastBlank = false;
 
     for (var i = 0; i < items.length; i++) {
-      if (inFence[i]) {
+      if (inFence[i] || items[i].raw) {
         out.push(items[i]);
         lastBlank = false;
       } else if (isBlank(items[i].text)) {
-        if (!lastBlank && out.length) out.push({ text: '', noJoin: false });
+        if (!lastBlank && out.length) out.push({ text: '', noJoin: false, raw: false });
         lastBlank = true;
       } else {
         out.push(items[i]);
@@ -425,7 +615,7 @@
     for (var i = 0; i < items.length; i++) {
       var line = items[i].text;
 
-      if (items[i].noJoin) {
+      if (items[i].raw || items[i].noJoin) {
         flush();
         out.push(line);
         inIndentedCode = false;
@@ -485,10 +675,8 @@
     lines = dedent(lines);
     lines = stripTrailing(lines);
 
-    // From here the steps carry a per-line noJoin flag alongside the text.
-    var items = lines.map(function (line) {
-      return { text: line, noJoin: false };
-    });
+    // From here the steps carry per-line noJoin and raw flags alongside the text.
+    var items = reconstructBlocks(lines);
     items = handleGlyphs(items);
     items = collapseBlanks(items);
 

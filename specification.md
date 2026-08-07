@@ -35,9 +35,18 @@ There's a bunch of unwanted leading space on each line.  Paragraphs have hard re
 
 ## Objective
 
-A simple web page that accepts a paste of text that's been copied from Claude Code and cleans up the formatting to produce clean markdown.
+A simple web page that accepts a paste of text that's been copied from Claude Code and
+turns it into clean markdown that preserves the **formatting intent** of the original.
 
-Then, it displays the result and has a COPY TO CLIPBOARD button that allows the user to extract the result.
+Cruft removal was the starting point, because leading indent and hard-wrapped paragraphs
+were the biggest annoyance. But the real goal is broader: Claude's terminal output was
+rendered for a terminal and was often never meant to be re-used. Getting it back into
+markdown means both removing what the terminal added *and* rebuilding what the terminal
+flattened — a markdown table that became a box-drawn one, a file listing that became a
+tree.
+
+Then, it displays the result and has a COPY TO CLIPBOARD button that allows the user to
+extract the result.
 
 ## Considerations
 
@@ -47,9 +56,20 @@ Use simple, clean, modern styling for the page.
 
 **Scope guardrail:** This is *not* a markdown linter or pretty-printer. It does not
 normalize heading styles, reflow to a column width, renumber lists, or canonicalize
-bullet characters. Its only job is to remove the terminal-copy cruft that would
-otherwise destroy the formatting when the text is pasted into a markdown renderer.
-When in doubt, leave the text alone.
+bullet characters. It only reverses what terminal rendering did to the text.
+
+**Bias when a rule is uncertain: reconstruct high-confidence patterns only.** Act when
+the pattern is structurally unambiguous — a box table with a complete top border, a tree
+with two or more branch lines — and leave the text alone otherwise. Imposing structure
+the author didn't intend is worse than missing some, because the user won't notice it.
+Recognition thresholds are therefore deliberately strict, and a pattern that fails one
+falls through to the ordinary rules rather than being guessed at.
+
+**One thing is out of reach.** A plain-text terminal copy has already lost bold and
+italic — no markers, no escapes, nothing to recover from. Unless a paste carries ANSI
+codes (most copy operations strip them), inline emphasis is unrecoverable. This tool
+restores *block* structure; it cannot restore inline emphasis, and shouldn't try to
+guess at it.
 
 ## Architecture
 
@@ -65,7 +85,7 @@ When in doubt, leave the text alone.
 
 Applied in order to the pasted text.
 
-**Code-fence tracking is shared.** Steps 1, 3, 4 and 5 all need to know which lines sit
+**Code-fence tracking is shared.** Steps 1, 2.5, 3, 4 and 5 all need to know which lines sit
 inside a fence. One function does the scan — toggling in/out state on each fence line,
 with an unclosed fence leaving the state on through the end of the text — and every step
 calls it, rather than tracking fences independently. Both ``` and ~~~ open a fence.
@@ -114,11 +134,54 @@ intended: in a Claude Code terminal copy, trailing spaces are essentially always
 cruft rather than a deliberate hard break, and removing them is the whole point. The rare
 false positive is accepted.
 
+### 2.5 Reconstruct box-drawing blocks
+
+Terminal rendering turns a markdown table into a box-drawn one and a file listing into a
+tree. Both are structure the author meant to convey, and both sit in characters that the
+glyph step below would otherwise strip, so they are recognised and rebuilt *before* it
+runs. Reconstructed blocks are flagged `raw` and every later step passes them through
+untouched.
+
+**Box tables → markdown tables.** A table is recognised only from a complete top border
+(`┌───┬───┐`); a paste that starts mid-table is left alone rather than guessed at. Rows
+are separated by `├───┼───┤` lines and the block ends at `└───┴───┘`, at any line that
+is not part of the table, or at the end of the text — so a truncated paste still converts
+what it has.
+
+Within a row, cells are split on `│` and trimmed. One logical row may span several
+physical lines because the terminal wrapped a long cell; fragments of the same column
+rejoin with a single space, and the blank fragments padding the short columns of a tall
+row are dropped. The first row group, above the first separator, is the header.
+
+Output columns are padded so the emitted source lines up, the way a human would write it.
+The box drawing carries no alignment information, so every column is left-aligned. A
+literal `|` inside a cell is escaped as `\|`.
+
+A box with fewer than two columns is a boxed note or ASCII art, not a table. It is
+**fenced verbatim** rather than converted or stripped — the border was deliberate.
+
+**Trees → fenced blocks.** A tree is recognised from two or more branch lines (`├──`,
+`└──`, or `tree`'s ASCII `|--` / `` `-- ``). A single branch line is too weak a signal
+and is left alone. The run continues across `│`-only spacer lines and ends at a blank
+line or ordinary prose.
+
+If the line immediately above the run is a bare path or filename — no spaces, no prose
+punctuation — it is the tree's root and is pulled into the block. `myproject/` qualifies;
+`Here's the layout:` does not.
+
+The block is emitted inside a fence, because markdown collapses a tree's line breaks
+otherwise. A branch line too isolated to be a confident tree is left exactly as it is,
+but flagged `noJoin` so step 5 can't glue it into the surrounding paragraph.
+
 ### 3. Handle Claude Code UI glyphs
 
 A terminal copy may drag along Claude Code's own chrome: message bullets (`⏺` `●`),
-the tool-result elbow (`⎿`), and box/tree rules (`│` `├` `└` `─` `→`). Any such glyph
-appearing at the *start* of a line (after its indent) is handled as follows:
+the tool-result elbow (`⎿`), and box rules (`│` `→`). Any such glyph appearing at the
+*start* of a line (after its indent) is handled as follows:
+
+Tree branches (`├` `└` `─`) are deliberately **not** in this set. They are structure,
+not chrome, and step 2.5 rebuilds the ones it is confident about. Stripping the leftovers
+turned `├── src/` into `── src/`, which is worse than leaving them alone.
 
 - **If it looks like a bullet list, it becomes `- `.** The test is purely structural,
   not glyph-specific: if **two or more lines at the same indent level start with the
