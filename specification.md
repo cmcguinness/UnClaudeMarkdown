@@ -159,6 +159,17 @@ isn't certain, but don't dismantle structure that plainly is.
 The test requires *both* bars. `│ some text` with no closing bar is Claude Code's
 continuation chrome, not a table row, and stays in the glyph step's hands as before.
 
+**An unrecognised box is fenced verbatim.** A run of two or more consecutive box lines
+is unambiguously a box, so it is fenced even when the table parser declined it — a
+truncated paste with no top border, a border shape this tool doesn't parse. A grid only
+reads in monospace: unfenced, a markdown renderer soft-wraps it into a paragraph and
+Slack renders it in a proportional font, and either way the columns stop lining up.
+Below the two-line threshold a lone bar is not a grid and is left alone.
+
+This is the same reasoning that already fences a single-column box: when the tool won't
+convert a structure, the fallback is to preserve it exactly, not to let the later steps
+have it.
+
 **Box tables → markdown tables.** A table is recognised only from a complete top border
 (`┌───┬───┐`); a paste that starts mid-table is left alone rather than guessed at. Rows
 are separated by `├───┼───┤` lines and the block ends at `└───┴───┘`, at any line that
@@ -324,20 +335,20 @@ empty label becomes `<url>`. Bare URLs are left alone — Slack autolinks them.
 indent is preserved as-is and is the only nesting cue available. Numbered lists are left
 as literal `1.` text, which reads correctly without any translation.
 
-**An unrecognised box is fenced anyway.** A run of two or more consecutive box lines is
-unambiguously a box, so it is fenced for the Slack target even when step 2.5 declined to
-recognise it as a table. Without monospace the grid does not line up, which makes an
-unfenced box in Slack worse than useless. A *lone* box line is left alone — one line is
-not a grid. Emphasis translation is skipped over box lines: it would read the `*/15` in a
-cron expression as italics.
+**Box lines are passed through untouched.** Any box worth fencing was already fenced by
+step 2.5, so what reaches step 6 is a lone bar. It is left exactly as it is: emphasis
+translation would read the `*/15` in a cron expression as italics.
 
 **Thematic breaks are dropped.** A `---` line renders in Slack as literal dashes. The
 line is removed and the blank lines that surrounded it are re-collapsed to one.
 
-**Known limit: the two Slack paste targets differ.** Slack's rich-text composer and the
-"format messages with markup" preference do not treat pasted markers identically. mrkdwn
-is correct for the markup preference and close for the composer; there is no single
-output that is exactly right for both, and the page does not try to offer two.
+**The "format messages with markup" preference is a prerequisite.** Slack's rich-text
+composer and that preference do not treat pasted markers identically, and testing in a
+real workspace settled which one this targets: with the preference off, pasted backticks
+stay literal and no code block forms, which makes a fenced table look broken. mrkdwn is
+correct for the preference and is what the page emits. There is no single output that is
+exactly right for both modes, and the page deliberately does not offer two — it documents
+the preference instead.
 
 ## User interface
 

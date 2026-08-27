@@ -522,6 +522,25 @@
         continue;
       }
 
+      // A box the steps above declined to convert — a truncated paste with no
+      // top border, a border this tool doesn't parse — is still a grid the
+      // author drew, and a grid only reads in monospace. Two or more consecutive
+      // box lines are unambiguously a box, so the run is fenced verbatim. Below
+      // that threshold a lone bar is not a grid and is left alone.
+      if (isBoxLine(lines[i])) {
+        var boxEnd = i;
+        while (boxEnd < lines.length && !inFence[boxEnd] && isBoxLine(lines[boxEnd])) boxEnd++;
+        if (boxEnd - i >= 2) {
+          blocks.push({
+            start: i,
+            end: boxEnd - 1,
+            out: ['```'].concat(lines.slice(i, boxEnd), ['```'])
+          });
+          i = boxEnd;
+          continue;
+        }
+      }
+
       i++;
     }
     return blocks;
@@ -797,25 +816,10 @@
         }
       }
 
-      // A box that step 2.5 didn't recognise — a truncated paste, an unusual
-      // border — never got fenced, and an unfenced grid in Slack is not
-      // monospaced, so its columns don't line up and the grid is pointless.
-      // Two or more consecutive box lines are unambiguously a box, so the run is
-      // fenced here. Emphasis translation is skipped over it too: it would read
-      // the */15 in a cron expression as italics.
-      if (isBoxLine(lines[i])) {
-        var boxEnd = i;
-        while (boxEnd < lines.length && !inFence[boxEnd] && isBoxLine(lines[boxEnd])) boxEnd++;
-        if (boxEnd - i >= 2) {
-          out.push('```');
-          for (var k = i; k < boxEnd; k++) out.push(lines[k]);
-          out.push('```');
-        } else {
-          push(lines[i]);
-        }
-        i = boxEnd - 1;
-        continue;
-      }
+      // Any box worth fencing was already fenced by step 2.5, so what reaches
+      // here is a lone bar. It is still passed through untouched: emphasis
+      // translation would read the */15 in a cron expression as italics.
+      if (isBoxLine(lines[i])) { push(lines[i]); continue; }
 
       var line = lines[i];
 

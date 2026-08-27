@@ -32,9 +32,13 @@ pre-existing bugs in the markdown path as well, not new with Slackify:
   entirely of box characters, is now held back from the glyph step and flagged
   `noJoin`. Requiring both bars keeps Claude Code's `│ continuation` chrome
   stripping exactly as before.
-- **An unrecognised box was left unfenced for Slack.** Grid without monospace is
-  not a grid. A run of 2+ box lines is now fenced for the Slack target even when
-  step 2.5 declined to convert it. A lone box line is still left alone.
+- **An unrecognised box was left unfenced.** Grid without monospace is not a grid.
+  A run of 2+ box lines is now fenced verbatim by step 2.5 itself, so it applies to
+  **both** targets — a markdown renderer would otherwise soft-wrap the box into a
+  paragraph just as Slack renders it proportionally. A lone box line is still left
+  alone. (This landed for Slack first and was ported to markdown the same day, at
+  which point the Slack-specific copy of the logic was deleted rather than left to
+  drift.)
 
 Emphasis translation now skips box lines too — it was turning the `*/15` in a cron
 expression into `_/15_`.
@@ -43,12 +47,15 @@ Verified: rounded, heavy and truncated variants of a real 3-column table from th
 user all keep their grid on both targets, and the rounded one now converts to a
 proper markdown table on Clean (it used to be destroyed). Markdown path still
 byte-identical to the previous commit on the spec acceptance sample and the mixed
-sample. Driven through the UI in Chrome with no console errors.
+sample. Driven through the UI in Chrome with no console errors — a truncated box now
+produces byte-identical output from Clean and Slackify, which is the right answer:
+once a box is fenced there is nothing left for the mrkdwn step to translate.
 
-**Open thread:** for the *markdown* target an unrecognised box is protected but not
-fenced, so a renderer will soft-wrap it into a paragraph and the columns still
-won't line up. The Slack fix above applies equally well and probably should be
-ported, but no one has reported it, so it is not done on speculation.
+Regression guards worth keeping in mind for the next change here: a complete box
+still converts to a real markdown table rather than being fenced; a *lone* `│ … │`
+line is still left unfenced; Claude Code's one-bar `│ continuation` chrome is still
+stripped; and a directory tree is still caught by the tree rule, not the box rule.
+
 
 
 **Slackify (2026-08-27).** A second output target alongside Clean, for pasting
@@ -83,9 +90,12 @@ and refocuses input, and a real click on Copy showed the "Copied to clipboard"
 toast. (A *synthetic* click on Copy reports failure — no user activation — which
 is expected and unrelated.)
 
-**Open thread:** not yet pasted into a real Slack workspace. The mrkdwn is right
-by the documented syntax, but the composer-vs-markup-preference difference above
-is worth eyeballing once in an actual message box.
+**Resolved in real use (2026-08-27):** the composer-vs-markup-preference question is
+settled. Charles tried it in an actual workspace: with Slack's **"Format messages
+with markup"** preference *off*, backticks paste as literal characters and no code
+block forms; turning it *on* makes the output work. So mrkdwn is the right target
+and the preference is a genuine prerequisite, not a nicety — worth saying out loud
+to anyone who tries Slackify and thinks it is broken.
 
 
 **Box tables and trees (2026-08-07).** New pipeline step 2.5, running before the

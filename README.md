@@ -22,6 +22,10 @@ as fenced monospace boxes (Slack has no tables), `**bold**` becomes `*bold*`,
 `*italic*` becomes `_italic_`, `[text](url)` becomes `<url|text>`, and bullets
 become `•`.
 
+**Turn on Slack’s “Format messages with markup” preference** (Preferences → Advanced)
+before using this. With it off, Slack’s composer pastes the backticks as literal
+characters and no code block forms — which makes tables in particular look broken.
+
 You can also just double-click `index.html` and use it offline. On a `file://`
 page `navigator.clipboard` may be unavailable, so Copy falls back to
 `document.execCommand('copy')`; it still works.
@@ -42,8 +46,9 @@ Applied in order (see [specification.md](specification.md) for the full rules):
    directory tree gets fenced so its structure survives. A box that isn't a
    table (a boxed note, ASCII art) is fenced verbatim rather than mangled. All
    four box weights are recognised — light, rounded, heavy, double. A box that
-   *isn't* recognised is still protected from the later steps, so a truncated
-   paste keeps its grid instead of having its `│` stripped as a UI glyph.
+   *isn't* recognised — a truncated paste, an unusual border — is fenced
+   verbatim rather than converted, so its grid survives instead of having its
+   `│` stripped as a UI glyph and its lines soft-wrapped into a paragraph.
 3. **Handle UI glyphs** — two or more lines at the same indent starting with the
    same glyph are a bullet list and become `- `; an isolated glyph is chrome and
    is stripped. A stripped line never joins its neighbours.
