@@ -85,7 +85,7 @@ guess at it.
 
 Applied in order to the pasted text.
 
-**Code-fence tracking is shared.** Steps 1, 2.5, 3, 4 and 5 all need to know which lines sit
+**Code-fence tracking is shared.** Steps 1, 2.5, 3, 4, 5 and 6 all need to know which lines sit
 inside a fence. One function does the scan — toggling in/out state on each fence line,
 with an unclosed fence leaving the state on through the end of the text — and every step
 calls it, rather than tracking fences independently. Both ``` and ~~~ open a fence.
@@ -270,13 +270,58 @@ becomes:
 2. The receive allowlist — the transport requires an allowlist.
 ```
 
+### 6. Translate to Slack mrkdwn (Slack target only)
+
+Steps 0–5 above produce markdown. The **Slackify** control runs the same pipeline with
+one difference in step 2.5 and one extra step at the end, producing text meant to be
+pasted into a Slack message rather than into a markdown renderer.
+
+Slack is not markdown. It has no headings, no tables and no nested lists, and it spells
+emphasis with single markers. The rule for this step is **translate the markers that
+survived, never guess at emphasis that did not** — the inline-emphasis limit in step 3
+applies here unchanged.
+
+Everything inside a code fence passes through untouched: ``` means the same thing in
+both, so fenced blocks are the one construct that needs no translation.
+
+**Tables become fenced blocks, not pipe tables.** For the Slack target, step 2.5 skips
+the box-table conversion entirely and fences every complete box verbatim, the way it
+already does for a single-column box. A markdown pipe table renders in Slack as literal
+pipes and dashes; the original box, in Slack's monospace code block, keeps its columns
+lined up. A pipe table that was already in the pasted text is fenced too — recognised
+strictly, as a run of `|`-delimited lines containing a `|---|` separator row.
+
+**Headings become bold lines.** `## Next steps` becomes `*Next steps*`. Slack has no
+heading construct, and bold on its own line is what a Slack author writes instead.
+
+**Emphasis markers collapse to Slack's.** `**bold**` and `__bold__` become `*bold*`,
+`*italic*` becomes `_italic_`, and `~~strike~~` becomes `~strike~`. Inline code spans
+and link URLs are lifted out to placeholders before this runs and restored after, so a
+URL containing `_` or `*` is never mangled. Bold is resolved before italics, and held
+as a placeholder too, so the italic pass cannot see the stars bold just emitted.
+
+**Links become Slack link syntax.** `[text](url)` becomes `<url|text>`; a link with an
+empty label becomes `<url>`. Bare URLs are left alone — Slack autolinks them.
+
+**Bullets become `•`.** Slack renders no nesting from pasted plain text, so the leading
+indent is preserved as-is and is the only nesting cue available. Numbered lists are left
+as literal `1.` text, which reads correctly without any translation.
+
+**Thematic breaks are dropped.** A `---` line renders in Slack as literal dashes. The
+line is removed and the blank lines that surrounded it are re-collapsed to one.
+
+**Known limit: the two Slack paste targets differ.** Slack's rich-text composer and the
+"format messages with markup" preference do not treat pasted markers identically. mrkdwn
+is correct for the markup preference and close for the composer; there is no single
+output that is exactly right for both, and the page does not try to offer two.
+
 ## User interface
 
 ### Layout
 
 Two panes side by side, under a page title. Input textarea on the left, cleaned output
-on the right, with a **Clean** control between them and a **Copy to clipboard** button
-on the output pane. On narrow windows the panes stack vertically.
+on the right, with **Clean** and **Slackify** controls between them and a **Copy to
+clipboard** button on the output pane. On narrow windows the panes stack vertically.
 
 ```
 ┌────────────────────────────────┐
@@ -284,24 +329,30 @@ on the output pane. On narrow windows the panes stack vertically.
 ├──────────────┬─────────────────┤
 │ Paste here   │ Cleaned  [Copy] │
 │              │                 │
-│ █            │                 │
+│ █   [Clean]  │                 │
+│  [Slackify]  │                 │
 └──────────────┴─────────────────┘
 ```
 
 ### Behavior
 
-- **Cleanup runs when the Clean button is pressed**, not live as you type. The input can
-  be edited freely without the output churning underneath it.
+- **Cleanup runs when a conversion button is pressed**, not live as you type. The input
+  can be edited freely without the output churning underneath it.
+- **Two conversions, one output pane.** **Clean** produces markdown; **Slackify** produces
+  Slack mrkdwn (rule 6). Whichever ran last owns the output, and the output pane title
+  changes to say which — "Cleaned" or "Slack-ready" — so the two results are never
+  confused. There is no mode toggle: both buttons are always visible and either can be
+  pressed at any time to re-run on the same input.
 - **The output pane is read-only**, showing the cleaned markdown *source* in a monospace
   font — not a rendered preview. Read-only makes it unambiguous that Copy gives you
   exactly what the cleaner produced.
 - **Copy to clipboard** puts the full cleaned source on the clipboard, and confirms with
   a small transient toast message. If the clipboard write fails, the toast says so
   rather than silently doing nothing.
-- **Clear** empties both panes and returns focus to the input textarea, ready for the
-  next paste.
-- **Buttons disable when there is nothing to act on.** Clean is disabled while the input
-  is empty; Copy is disabled while the output is empty. Their state updates as the input
+- **Clear** empties both panes, resets the output title to "Cleaned", and returns focus to
+  the input textarea, ready for the next paste.
+- **Buttons disable when there is nothing to act on.** Clean and Slackify are disabled
+  while the input is empty; Copy is disabled while the output is empty. Their state updates as the input
   changes, so no error messaging is needed for the empty case.
 - **No keyboard shortcuts.** The controls are mouse/click driven only.
 - **No change summary or diff.** The page shows the result and nothing about what it

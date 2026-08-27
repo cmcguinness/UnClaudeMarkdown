@@ -1,6 +1,6 @@
 # STATUS — Un-Claude Markdown
 
-_Last updated: 2026-08-07_
+_Last updated: 2026-08-27_
 
 ## Where things stand
 
@@ -17,6 +17,43 @@ high-confidence patterns only.** Act on structurally unambiguous patterns, leave
 everything else alone.
 
 ## Recent work
+
+**Slackify (2026-08-27).** A second output target alongside Clean, for pasting
+into Slack rather than into a markdown renderer. Steps 0–5 are shared; the target
+changes exactly two things:
+
+- Step 2.5 skips the box-table conversion and fences every box verbatim. A
+  markdown pipe table renders in Slack as literal pipes; the original box in a
+  code block keeps its columns. A pipe table already present in the paste is
+  fenced too, recognised strictly (a `|---|` separator row required).
+- New step 6 translates markdown markers to mrkdwn: headings → bold lines,
+  `**bold**` → `*bold*`, `*italic*` → `_italic_`, `~~strike~~` → `~strike~`,
+  `[text](url)` → `<url|text>`, bullets → `•`, thematic breaks dropped and the
+  surrounding blanks re-collapsed. Code spans and link URLs are lifted to NUL
+  placeholders before emphasis runs so a URL containing `_` or `*` survives;
+  bold is held as a placeholder too, so the italic pass can't see its stars.
+
+The scope rule held: this translates markers that survived, it does not guess at
+emphasis the terminal already destroyed.
+
+**Known limit, recorded in the spec:** Slack's rich-text composer and the "format
+messages with markup" preference don't treat pasted markers identically. mrkdwn is
+right for the preference and close for the composer. Deliberately not offering two
+modes for this.
+
+Verified: the markdown path is byte-identical to `HEAD` on both the spec
+acceptance sample and a mixed table/tree/list/link sample (diffed against the
+pre-change `clean()` in the node harness). Driven through the real UI in Chrome —
+both buttons disabled on empty input, Slackify sets the output title to
+"Slack-ready" and Clean back to "Cleaned", Clear resets both panes and the title
+and refocuses input, and a real click on Copy showed the "Copied to clipboard"
+toast. (A *synthetic* click on Copy reports failure — no user activation — which
+is expected and unrelated.)
+
+**Open thread:** not yet pasted into a real Slack workspace. The mrkdwn is right
+by the documented syntax, but the composer-vs-markup-preference difference above
+is worth eyeballing once in an actual message box.
+
 
 **Box tables and trees (2026-08-07).** New pipeline step 2.5, running before the
 glyph step so the box-drawing characters still exist when it runs:

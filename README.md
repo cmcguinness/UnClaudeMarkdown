@@ -16,6 +16,12 @@ what the terminal added, and rebuilding what it flattened.
 Paste into the left pane, press **Clean**, copy the result out of the right pane.
 That's the whole tool — no sessions, no accounts, no settings.
 
+Press **Slackify** instead of Clean when the destination is a Slack message. Same
+pipeline, but the output is Slack mrkdwn: headings become bold lines, tables stay
+as fenced monospace boxes (Slack has no tables), `**bold**` becomes `*bold*`,
+`*italic*` becomes `_italic_`, `[text](url)` becomes `<url|text>`, and bullets
+become `•`.
+
 You can also just double-click `index.html` and use it offline. On a `file://`
 page `navigator.clipboard` may be unavailable, so Copy falls back to
 `document.execCommand('copy')`; it still works.
@@ -43,6 +49,12 @@ Applied in order (see [specification.md](specification.md) for the full rules):
 5. **Join hard-wrapped lines** — consecutive prose lines merge into one
    paragraph. Fenced code, 4-space indented code, list markers, headings,
    blockquotes, table rows, and thematic breaks are all protected.
+6. **Translate to Slack mrkdwn** *(Slackify only)* — headings → bold lines,
+   tables → fenced blocks, `**bold**` → `*bold*`, `*italic*` → `_italic_`,
+   `~~strike~~` → `~strike~`, `[text](url)` → `<url|text>`, bullets → `•`,
+   thematic breaks dropped. Code spans and link URLs are held aside so emphasis
+   translation can't mangle a URL containing `_` or `*`. Fenced blocks pass
+   through untouched.
 
 It is **not** a markdown linter or pretty-printer. It won't reflow to a column
 width, renumber lists, canonicalize bullet characters, or normalize heading
@@ -55,6 +67,13 @@ intend is worse than missing some, because you won't notice it.
 
 One thing is out of reach: a plain-text copy has already lost bold and italic
 entirely, so inline emphasis is unrecoverable. This restores block structure.
+Slackify translates the markers that survived; it never guesses at ones that
+didn't.
+
+One known limit on the Slack side: Slack's rich-text composer and its "format
+messages with markup" preference don't treat pasted markers identically. mrkdwn
+is correct for the markup preference and close for the composer; no single output
+is exactly right for both.
 
 ## Design
 

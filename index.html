@@ -191,12 +191,13 @@
 
   <div class="controls">
     <button id="clean" class="btn-primary" disabled>Clean &rarr;</button>
+    <button id="slackify" class="btn-secondary" disabled>Slackify &rarr;</button>
     <button id="clear" class="btn-secondary">Clear</button>
   </div>
 
   <section class="pane">
     <div class="pane-head">
-      <span class="pane-title">Cleaned</span>
+      <span class="pane-title" id="output-title">Cleaned</span>
       <button id="copy" class="btn-secondary" disabled>Copy to clipboard</button>
     </div>
     <textarea id="output" readonly spellcheck="false" placeholder="Cleaned markdown appears here&hellip;"></textarea>
@@ -448,7 +449,7 @@
     return branches >= 2 ? { start: start, end: last } : null;
   }
 
-  function findBlocks(lines) {
+  function findBlocks(lines, target) {
     var inFence = computeFences(lines);
     var blocks = [];
     var i = 0;
@@ -461,7 +462,9 @@
         if (table) {
           // A complete box that isn't a table — a boxed note, ASCII art — is
           // still deliberate structure. Fence it rather than convert or strip it.
-          var md = boxTableToMarkdown(table.groups) ||
+          // Slack has no table syntax at all, so for that target every box stays
+          // a box: fenced verbatim, where monospace keeps the columns lined up.
+          var md = (target === 'slack' ? null : boxTableToMarkdown(table.groups)) ||
                    ['```'].concat(lines.slice(i, table.end + 1), ['```']);
           blocks.push({ start: i, end: table.end, out: md });
           i = table.end + 1;
@@ -492,9 +495,9 @@
     return blocks;
   }
 
-  function reconstructBlocks(lines) {
+  function reconstructBlocks(lines, target) {
     var byStart = {};
-    findBlocks(lines).forEach(function (b) { byStart[b.start] = b; });
+    findBlocks(lines, target).forEach(function (b) { byStart[b.start] = b; });
 
     var items = [];
     var i = 0;
@@ -670,17 +673,118 @@
     return out;
   }
 
-  function clean(source) {
+  /* Step 6 (Slack target only) — markdown to Slack mrkdwn.
+   *
+   * Slack is not markdown. It has no headings, no tables, no nested lists, and
+   * it spells emphasis with single markers. This step is a translation of the
+   * markers that survived, never a guess at emphasis that didn't — see the
+   * scope note in specification.md.
+   *
+   * Fenced blocks pass through untouched: ``` means the same thing in both.
+   */
+
+  var MD_LINK = /!?\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  var CODE_SPAN = /`[^`]*`/g;
+  var HR = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+  var HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  var BULLET = /^(\s*)[-*+][ \t]+/;
+  var PIPE_ROW = /^\s*\|.*\|\s*$/;
+  var PIPE_RULE = /^\s*\|[\s:|-]*-[\s:|-]*\|\s*$/;
+
+  // Emphasis translation must not reach inside code spans or link URLs, so both
+  // are lifted out to placeholders first and put back last. NUL is the marker;
+  // any NUL already in the text is dropped up front so it cannot be confused.
+  function slackInline(line) {
+    var held = [];
+    function hold(replacement) {
+      held.push(replacement);
+      return '\u0000' + (held.length - 1) + '\u0000';
+    }
+
+    line = line.replace(/\u0000/g, '');
+    line = line.replace(CODE_SPAN, function (span) { return hold(span); });
+    line = line.replace(MD_LINK, function (all, label, url) {
+      return hold(label ? '<' + url + '|' + label + '>' : '<' + url + '>');
+    });
+
+    // Bold collapses to a single marker; a lone star becomes Slack italics.
+    // Bold is held as NUL too, so the italic pass cannot see its stars.
+    line = line.replace(/\*\*(\S(?:[\s\S]*?\S)?)\*\*/g, function (all, inner) {
+      return hold('*' + inner + '*');
+    });
+    line = line.replace(/__(\S(?:[\s\S]*?\S)?)__/g, function (all, inner) {
+      return hold('*' + inner + '*');
+    });
+    line = line.replace(/~~(\S(?:[\s\S]*?\S)?)~~/g, '~$1~');
+    line = line.replace(/\*(\S(?:[\s\S]*?\S)?)\*/g, '_$1_');
+
+    return line.replace(/\u0000(\d+)\u0000/g, function (all, n) { return held[+n]; });
+  }
+
+  function slackify(text) {
+    var lines = text.split('\n');
+    var inFence = computeFences(lines);
+    var out = [];
+
+    // Dropping a thematic break can leave the blank lines that surrounded it
+    // adjacent, so blanks are re-collapsed as they are emitted.
+    function push(line) {
+      if (isBlank(line) && (!out.length || isBlank(out[out.length - 1]))) return;
+      out.push(line);
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      if (inFence[i]) { out.push(lines[i]); continue; }
+
+      // A pipe table renders as garbage in Slack. Fence the whole run so the
+      // columns at least survive as monospace. Strict: a separator row required.
+      if (PIPE_ROW.test(lines[i])) {
+        var end = i, sep = false;
+        while (end < lines.length && !inFence[end] && PIPE_ROW.test(lines[end])) {
+          if (PIPE_RULE.test(lines[end])) sep = true;
+          end++;
+        }
+        if (sep) {
+          out.push('```');
+          for (var t = i; t < end; t++) out.push(lines[t]);
+          out.push('```');
+          i = end - 1;
+          continue;
+        }
+      }
+
+      var line = lines[i];
+
+      // Slack has no thematic break; a bare --- renders as literal dashes.
+      if (HR.test(line) && !isBlank(line)) { continue; }
+
+      var heading = HEADING.exec(line);
+      if (heading) {
+        push(heading[2] ? '*' + slackInline(heading[2]) + '*' : '');
+        continue;
+      }
+
+      // Slack renders no nesting from pasted text; the indent is all we can keep.
+      line = line.replace(BULLET, '$1• ');
+
+      push(slackInline(line));
+    }
+
+    return out.join('\n');
+  }
+
+  function clean(source, target) {
     var lines = normalize(source);
     lines = dedent(lines);
     lines = stripTrailing(lines);
 
     // From here the steps carry per-line noJoin and raw flags alongside the text.
-    var items = reconstructBlocks(lines);
+    var items = reconstructBlocks(lines, target);
     items = handleGlyphs(items);
     items = collapseBlanks(items);
 
-    return joinWraps(items).join('\n');
+    var text = joinWraps(items).join('\n');
+    return target === 'slack' ? slackify(text) : text;
   }
 
   /* ------------------------------------------------------------------ *
@@ -690,8 +794,10 @@
   var input = document.getElementById('input');
   var output = document.getElementById('output');
   var cleanBtn = document.getElementById('clean');
+  var slackBtn = document.getElementById('slackify');
   var copyBtn = document.getElementById('copy');
   var clearBtn = document.getElementById('clear');
+  var outputTitle = document.getElementById('output-title');
   var toast = document.getElementById('toast');
   var toastTimer = null;
 
@@ -703,21 +809,35 @@
   }
 
   function syncButtons() {
-    cleanBtn.disabled = input.value.trim() === '';
+    var empty = input.value.trim() === '';
+    cleanBtn.disabled = empty;
+    slackBtn.disabled = empty;
     copyBtn.disabled = output.value === '';
+  }
+
+  function run(target, title, placeholder) {
+    output.value = clean(input.value, target);
+    output.scrollTop = 0;
+    outputTitle.textContent = title;
+    output.placeholder = placeholder;
+    syncButtons();
   }
 
   input.addEventListener('input', syncButtons);
 
   cleanBtn.addEventListener('click', function () {
-    output.value = clean(input.value);
-    output.scrollTop = 0;
-    syncButtons();
+    run('markdown', 'Cleaned', 'Cleaned markdown appears here…');
+  });
+
+  slackBtn.addEventListener('click', function () {
+    run('slack', 'Slack-ready', 'Slack-ready text appears here…');
   });
 
   clearBtn.addEventListener('click', function () {
     input.value = '';
     output.value = '';
+    outputTitle.textContent = 'Cleaned';
+    output.placeholder = 'Cleaned markdown appears here…';
     syncButtons();
     input.focus();
   });
