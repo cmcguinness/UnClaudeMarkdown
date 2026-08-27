@@ -40,7 +40,10 @@ Applied in order (see [specification.md](specification.md) for the full rules):
 2.5 **Reconstruct box-drawing blocks** — a box-drawn table becomes a real
    markdown table, with wrapped cells rejoined and columns padded to line up. A
    directory tree gets fenced so its structure survives. A box that isn't a
-   table (a boxed note, ASCII art) is fenced verbatim rather than mangled.
+   table (a boxed note, ASCII art) is fenced verbatim rather than mangled. All
+   four box weights are recognised — light, rounded, heavy, double. A box that
+   *isn't* recognised is still protected from the later steps, so a truncated
+   paste keeps its grid instead of having its `│` stripped as a UI glyph.
 3. **Handle UI glyphs** — two or more lines at the same indent starting with the
    same glyph are a bullet list and become `- `; an isolated glyph is chrome and
    is stripped. A stripped line never joins its neighbours.

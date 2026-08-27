@@ -230,13 +230,43 @@
 
   var FENCE = /^ *(?:```|~~~)/;
 
-  // Box-drawing table parts. A table is recognised only from a complete top
-  // border, which is the high-confidence signal — a paste that starts mid-table
-  // is left alone rather than guessed at.
-  var BOX_TOP    = /^ *┌[─┬]*┐ *$/;
-  var BOX_SEP    = /^ *├[─┼]*┤ *$/;
-  var BOX_BOTTOM = /^ *└[─┴]*┘ *$/;
-  var BOX_ROW    = /^ *│.*│ *$/;
+  // Box-drawing table parts. All four weights a terminal might draw with are
+  // accepted — light, rounded, heavy, double — because they are the same
+  // structure and which one appears is a rendering choice, not a semantic one.
+  var BOX_H  = '─━═';                 // horizontals
+  var BOX_V  = '│┃║';                 // verticals
+  var BOX_TL = '┌╭┏╔', BOX_TR = '┐╮┓╗';   // top corners
+  var BOX_BL = '└╰┗╚', BOX_BR = '┘╯┛╝';   // bottom corners
+  var BOX_TD = '┬┳╦', BOX_TU = '┴┻╩';     // tees pointing down / up
+  var BOX_LT = '├┣╠', BOX_RT = '┤┫╣';     // tees pointing right / left
+  var BOX_X  = '┼╋╬╪╫';               // crossings
+
+  function boxRe(body) {
+    return new RegExp('^ *' + body + ' *$');
+  }
+  function set(chars) { return '[' + chars + ']'; }
+
+  // A table is recognised only from a complete top border, which is the
+  // high-confidence signal — a paste that starts mid-table is left alone rather
+  // than guessed at. (It is still protected from damage; see BOX_LINE below.)
+  var BOX_TOP    = boxRe(set(BOX_TL) + set(BOX_H + BOX_TD) + '*' + set(BOX_TR));
+  var BOX_SEP    = boxRe(set(BOX_LT) + set(BOX_H + BOX_X) + '*' + set(BOX_RT));
+  var BOX_BOTTOM = boxRe(set(BOX_BL) + set(BOX_H + BOX_TU) + '*' + set(BOX_BR));
+  var BOX_ROW    = boxRe(set(BOX_V) + '.*' + set(BOX_V));
+
+  // Any line that is unambiguously part of a box, whether or not the box as a
+  // whole was recognised as a table. A truncated paste, an unusual border, a
+  // box this tool won't convert — all of them still had a grid the author drew,
+  // and the steps below must not dismantle it. A row must both open and close
+  // with a vertical: "│ text" with no closing bar is Claude Code's continuation
+  // chrome, not a table row, and stays in the glyph step's hands.
+  var BOX_BORDER = boxRe(set(BOX_TL + BOX_TR + BOX_BL + BOX_BR + BOX_LT + BOX_RT +
+                             BOX_TD + BOX_TU + BOX_X + BOX_H) +
+                         set(BOX_TL + BOX_TR + BOX_BL + BOX_BR + BOX_LT + BOX_RT +
+                             BOX_TD + BOX_TU + BOX_X + BOX_H) + '+');
+  function isBoxLine(line) {
+    return BOX_ROW.test(line) || BOX_BORDER.test(line);
+  }
 
   // Directory trees. The branch marker is distinctive enough to be safe; both
   // the unicode form Claude Code emits and `tree`'s ASCII fallback are matched.
@@ -361,9 +391,11 @@
    * through untouched.
    */
 
+  var BOX_V_SPLIT = new RegExp('[' + BOX_V + ']');
+
   function splitCells(line) {
     var t = line.trim();
-    return t.slice(1, -1).split('│').map(function (cell) { return cell.trim(); });
+    return t.slice(1, -1).split(BOX_V_SPLIT).map(function (cell) { return cell.trim(); });
   }
 
   // One logical row may span several physical lines, because the terminal wrapped
@@ -509,10 +541,15 @@
         });
         i = block.end + 1;
       } else {
-        // A branch line too isolated to be a confident tree is left as it is —
-        // but never joined onto its neighbours, which would glue it into a
-        // paragraph and lose the line break it clearly wanted.
-        items.push({ text: lines[i], noJoin: TREE_BRANCH.test(lines[i]), raw: false });
+        // A branch line too isolated to be a confident tree, or a box line whose
+        // box wasn't recognised, is left as it is — but never joined onto its
+        // neighbours, which would glue it into a paragraph and lose the line
+        // break it clearly wanted. For a box that means losing the whole grid.
+        items.push({
+          text: lines[i],
+          noJoin: TREE_BRANCH.test(lines[i]) || isBoxLine(lines[i]),
+          raw: false
+        });
         i++;
       }
     }
@@ -531,8 +568,12 @@
   function handleGlyphs(items) {
     var lines = items.map(text);
     var inFence = computeFences(lines);
+    // A table row opens with the same │ this step treats as chrome. Rows are
+    // held back from the match entirely: stripping their leading bar, or worse
+    // reading a column of them as a bullet list, destroys the grid.
     var match = lines.map(function (line, i) {
-      return (inFence[i] || items[i].raw) ? null : GLYPH_LINE.exec(line);
+      if (inFence[i] || items[i].raw || isBoxLine(line)) return null;
+      return GLYPH_LINE.exec(line);
     });
 
     var action = new Array(lines.length);
@@ -547,7 +588,10 @@
     }
 
     for (var i = 0; i < lines.length; i++) {
-      if (inFence[i] || items[i].raw || isBlank(lines[i])) { flush(); continue; }
+      if (inFence[i] || items[i].raw || isBlank(lines[i]) || isBoxLine(lines[i])) {
+        flush();
+        continue;
+      }
 
       var m = match[i];
       if (m) {
@@ -751,6 +795,26 @@
           i = end - 1;
           continue;
         }
+      }
+
+      // A box that step 2.5 didn't recognise — a truncated paste, an unusual
+      // border — never got fenced, and an unfenced grid in Slack is not
+      // monospaced, so its columns don't line up and the grid is pointless.
+      // Two or more consecutive box lines are unambiguously a box, so the run is
+      // fenced here. Emphasis translation is skipped over it too: it would read
+      // the */15 in a cron expression as italics.
+      if (isBoxLine(lines[i])) {
+        var boxEnd = i;
+        while (boxEnd < lines.length && !inFence[boxEnd] && isBoxLine(lines[boxEnd])) boxEnd++;
+        if (boxEnd - i >= 2) {
+          out.push('```');
+          for (var k = i; k < boxEnd; k++) out.push(lines[k]);
+          out.push('```');
+        } else {
+          push(lines[i]);
+        }
+        i = boxEnd - 1;
+        continue;
       }
 
       var line = lines[i];

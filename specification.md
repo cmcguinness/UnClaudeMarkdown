@@ -142,6 +142,23 @@ glyph step below would otherwise strip, so they are recognised and rebuilt *befo
 runs. Reconstructed blocks are flagged `raw` and every later step passes them through
 untouched.
 
+**All four box weights are accepted.** Light (`┌ ─ │ ├ ┼`), rounded (`╭ ╮ ╰ ╯`), heavy
+(`┏ ━ ┃ ┣ ╋`) and double (`╔ ═ ║ ╠ ╬`) are the same structure; which one a terminal draws
+with is a rendering choice, not a semantic one. Recognising only the light set meant a
+rounded-corner table — which Claude Code does emit — fell through to the glyph step,
+which stripped its `│` as chrome and destroyed the grid.
+
+**An unrecognised box is protected even though it is not converted.** A line that both
+opens and closes with a vertical (`│ … │`), or that is made entirely of box-drawing
+characters, is a box line whatever else is true of it. Such lines are held back from the
+glyph step and flagged `noJoin`, so a truncated paste, an unusual border, or a box this
+tool declines to convert still comes out with its grid intact. This is the strict-
+recognition rule working as intended in both directions: don't impose structure that
+isn't certain, but don't dismantle structure that plainly is.
+
+The test requires *both* bars. `│ some text` with no closing bar is Claude Code's
+continuation chrome, not a table row, and stays in the glyph step's hands as before.
+
 **Box tables → markdown tables.** A table is recognised only from a complete top border
 (`┌───┬───┐`); a paste that starts mid-table is left alone rather than guessed at. Rows
 are separated by `├───┼───┤` lines and the block ends at `└───┴───┘`, at any line that
@@ -306,6 +323,13 @@ empty label becomes `<url>`. Bare URLs are left alone — Slack autolinks them.
 **Bullets become `•`.** Slack renders no nesting from pasted plain text, so the leading
 indent is preserved as-is and is the only nesting cue available. Numbered lists are left
 as literal `1.` text, which reads correctly without any translation.
+
+**An unrecognised box is fenced anyway.** A run of two or more consecutive box lines is
+unambiguously a box, so it is fenced for the Slack target even when step 2.5 declined to
+recognise it as a table. Without monospace the grid does not line up, which makes an
+unfenced box in Slack worse than useless. A *lone* box line is left alone — one line is
+not a grid. Emphasis translation is skipped over box lines: it would read the `*/15` in a
+cron expression as italics.
 
 **Thematic breaks are dropped.** A `---` line renders in Slack as literal dashes. The
 line is removed and the blank lines that surrounded it are re-collapsed to one.

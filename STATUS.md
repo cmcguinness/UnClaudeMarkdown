@@ -18,6 +18,39 @@ everything else alone.
 
 ## Recent work
 
+**Box tables were being destroyed (2026-08-27).** Reported from real use: tables
+pasted into Slack came out with no grid. Three separate causes, all of them
+pre-existing bugs in the markdown path as well, not new with Slackify:
+
+- **Only light box-drawing was recognised.** `╭ ╮ ╰ ╯` (rounded — which Claude Code
+  emits), `┏ ━ ┃` (heavy) and `╔ ═ ║` (double) all failed the `BOX_TOP` test, fell
+  through to the glyph step, and had every `│` rewritten to `- ` as if the column
+  were a bullet list. All four weights are now accepted.
+- **An unrecognised box got dismantled.** A truncated paste (no top border) hit the
+  same glyph damage, and a heavy box was additionally glued into a single line by
+  the join step. Any line that opens *and* closes with a vertical, or is made
+  entirely of box characters, is now held back from the glyph step and flagged
+  `noJoin`. Requiring both bars keeps Claude Code's `│ continuation` chrome
+  stripping exactly as before.
+- **An unrecognised box was left unfenced for Slack.** Grid without monospace is
+  not a grid. A run of 2+ box lines is now fenced for the Slack target even when
+  step 2.5 declined to convert it. A lone box line is still left alone.
+
+Emphasis translation now skips box lines too — it was turning the `*/15` in a cron
+expression into `_/15_`.
+
+Verified: rounded, heavy and truncated variants of a real 3-column table from the
+user all keep their grid on both targets, and the rounded one now converts to a
+proper markdown table on Clean (it used to be destroyed). Markdown path still
+byte-identical to the previous commit on the spec acceptance sample and the mixed
+sample. Driven through the UI in Chrome with no console errors.
+
+**Open thread:** for the *markdown* target an unrecognised box is protected but not
+fenced, so a renderer will soft-wrap it into a paragraph and the columns still
+won't line up. The Slack fix above applies equally well and probably should be
+ported, but no one has reported it, so it is not done on speculation.
+
+
 **Slackify (2026-08-27).** A second output target alongside Clean, for pasting
 into Slack rather than into a markdown renderer. Steps 0–5 are shared; the target
 changes exactly two things:
