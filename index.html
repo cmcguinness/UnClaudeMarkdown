@@ -481,6 +481,30 @@
     return branches >= 2 ? { start: start, end: last } : null;
   }
 
+  // Blockquotes. Claude Code draws a quote as a left bar (▎) on every line —
+  // including the lines its own wrapping created — and drops the ">". The bar is
+  // used for nothing else, so a single line of it is already a confident signal.
+  var QUOTE_LINE = /^ *▎ ?(.*)$/;
+
+  // Rebuild a quote: strip the bars, rejoin the terminal's wraps the way step 5
+  // would (blank lines and block starts still break), then put ">" back — unless
+  // the quote is the whole paste, in which case the user copied it to get at the
+  // text itself, and the quoting was only how the terminal happened to show it.
+  function quoteToMarkdown(lines, bare) {
+    var paras = [];
+    lines.forEach(function (line) {
+      var inner = QUOTE_LINE.exec(line)[1];
+      var prev = paras.length ? paras[paras.length - 1] : null;
+      if (isBlank(inner) || prev === null || isBlank(prev) || BLOCK_START.test(inner)) {
+        paras.push(isBlank(inner) ? '' : inner);
+      } else {
+        paras[paras.length - 1] = prev + ' ' + inner.trim();
+      }
+    });
+    if (bare) return paras;
+    return paras.map(function (p) { return p ? '> ' + p : '>'; });
+  }
+
   function findBlocks(lines, target) {
     var inFence = computeFences(lines);
     var blocks = [];
@@ -502,6 +526,17 @@
           i = table.end + 1;
           continue;
         }
+      }
+
+      if (QUOTE_LINE.test(lines[i])) {
+        var qEnd = i;
+        while (qEnd < lines.length && !inFence[qEnd] && QUOTE_LINE.test(lines[qEnd])) qEnd++;
+        var bare = lines.every(function (l, k) {
+          return (k >= i && k < qEnd) || isBlank(l);
+        });
+        blocks.push({ start: i, end: qEnd - 1, out: quoteToMarkdown(lines.slice(i, qEnd), bare) });
+        i = qEnd;
+        continue;
       }
 
       var run = treeRun(lines, i, inFence);

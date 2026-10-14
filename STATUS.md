@@ -1,6 +1,6 @@
 # STATUS — Un-Claude Markdown
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-10-14_
 
 ## Where things stand
 
@@ -17,6 +17,13 @@ high-confidence patterns only.** Act on structurally unambiguous patterns, leave
 everything else alone.
 
 ## Recent work
+
+**Quote bars become blockquotes (2026-10-14).** Claude Code draws a blockquote as
+`▎` on every line and drops the `>`. Step 2.5 now recognises a run of `▎` lines,
+strips the bars, rejoins the terminal's wraps (bare `▎` = paragraph break, block
+starts like `- ` keep their own line) and re-emits `> ` lines as a raw block. When the quote is the entire paste, no `>`
+is added — the user wants the bare text. Spec
+acceptance sample unchanged on both targets; verified in Chrome on a real paste.
 
 **Box tables were being destroyed (2026-08-27).** Reported from real use: tables
 pasted into Slack came out with no grid. Three separate causes, all of them

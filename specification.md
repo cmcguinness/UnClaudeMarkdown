@@ -201,6 +201,21 @@ The block is emitted inside a fence, because markdown collapses a tree's line br
 otherwise. A branch line too isolated to be a confident tree is left exactly as it is,
 but flagged `noJoin` so step 5 can't glue it into the surrounding paragraph.
 
+**Quote bars → blockquotes.** Claude Code renders a markdown blockquote as a left bar
+(`▎`) on every line, including the continuation lines its own wrapping created, and
+drops the `>`. The bar is used for nothing else, so a run of one or more `▎` lines is
+recognised as a quote. The bar and the single space after it are stripped, the
+terminal's wraps are rejoined (a bare `▎` line is a paragraph break inside the quote,
+and a list item or other block start still begins its own line), and every resulting
+line is prefixed with `> ` (a blank one with `>`). The run ends at the first line
+without a bar.
+
+**A quote that is the whole paste loses its bars entirely.** If nothing but blank lines
+surrounds the run, the user copied the quote to reuse its text, and the quoting was only
+how the terminal displayed it. The same stripping and rejoining happens, but no `>` is
+added. A quote with other text around it is part of a larger message and stays a
+blockquote.
+
 ### 3. Handle Claude Code UI glyphs
 
 A terminal copy may drag along Claude Code's own chrome: message bullets (`⏺` `●`),
