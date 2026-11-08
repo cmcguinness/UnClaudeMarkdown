@@ -328,6 +328,7 @@
       .replace(/\r\n?/g, '\n')                  // CRLF -> LF
       .replace(/\u00a0/g, ' ')                  // non-breaking space -> space
       .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')    // zero-width invisibles
+      .replace(/⧉[ \t]*(?=https?:\/\/)/g, '')     // Claude Code's link icon
       .split('\n')
       .map(expandLeadingTabs);
   }
@@ -484,7 +485,9 @@
   // Blockquotes. Claude Code draws a quote as a left bar (▎) on every line —
   // including the lines its own wrapping created — and drops the ">". The bar is
   // used for nothing else, so a single line of it is already a confident signal.
-  var QUOTE_LINE = /^ *▎ ?(.*)$/;
+  // The first line of a message can also carry the message bullet in front of
+  // the bar ("⏺ ▎ Re: …"); that bullet is chrome and goes with the bar.
+  var QUOTE_LINE = /^ *(?:[⏺●] +)?▎ ?(.*)$/;
 
   // Rebuild a quote: strip the bars, rejoin the terminal's wraps the way step 5
   // would (blank lines and block starts still break), then put ">" back — unless

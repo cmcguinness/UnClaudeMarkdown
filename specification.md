@@ -104,6 +104,9 @@ Before anything else:
   any other whitespace instead of surviving as invisible cruft.
 - **Zero-width characters removed** (U+200B, U+FEFF, and similar invisibles) — they ride
   along in terminal copies and confuse markdown parsers.
+- **Claude Code's link icon removed.** `⧉` drawn in front of a URL is the terminal's
+  "open link" affordance, not text. It is removed (with the space after it) wherever it
+  directly precedes `http://` or `https://`; a `⧉` anywhere else is left alone.
 - **Leading tabs expanded to spaces** (tab stop = 4) so the dedent measurement below is
   correct even with mixed tab/space indentation.
 
@@ -208,7 +211,10 @@ recognised as a quote. The bar and the single space after it are stripped, the
 terminal's wraps are rejoined (a bare `▎` line is a paragraph break inside the quote,
 and a list item or other block start still begins its own line), and every resulting
 line is prefixed with `> ` (a blank one with `>`). The run ends at the first line
-without a bar.
+without a bar. When the quote opens a message, its first line also carries the message
+bullet in front of the bar (`⏺ ▎ Re: …`); that bullet is chrome, so a `⏺` or `●`
+followed by spaces before the bar is stripped along with it and the line still counts
+as part of the quote.
 
 **A quote that is the whole paste loses its bars entirely.** If nothing but blank lines
 surrounds the run, the user copied the quote to reuse its text, and the quoting was only

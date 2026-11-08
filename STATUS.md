@@ -1,6 +1,6 @@
 # STATUS — Un-Claude Markdown
 
-_Last updated: 2026-10-14_
+_Last updated: 2026-11-08_
 
 ## Where things stand
 
@@ -17,6 +17,14 @@ high-confidence patterns only.** Act on structurally unambiguous patterns, leave
 everything else alone.
 
 ## Recent work
+
+**Quote that opens a message, and the link icon (2026-11-08).** A real reply pasted
+as `⏺ ▎ Re: …` had the message bullet in front of the first quote bar, so that line
+wasn't treated as part of the quote: its `▎` survived, the rest of the quote got `>`
+added because the "whole paste" check failed, and Claude Code's `⧉` link icon stayed
+in front of the URL. `QUOTE_LINE` now accepts a leading `⏺`/`●`, and step 0 drops a
+`⧉` that directly precedes an `http(s)://` URL. The spec acceptance sample's output is
+unchanged; checked in Chrome on the user's paste for both targets.
 
 **Quote bars become blockquotes (2026-10-14).** Claude Code draws a blockquote as
 `▎` on every line and drops the `>`. Step 2.5 now recognises a run of `▎` lines,
